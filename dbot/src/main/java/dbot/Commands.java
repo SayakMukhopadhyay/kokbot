@@ -8,9 +8,12 @@ import java.net.SocketException;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.text.SimpleDateFormat;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.TimeZone;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -138,7 +141,7 @@ public class Commands {
 						message += String.format("/%1$-12s | " + entry.getValue().getHelp(event) + "\n", entry.getKey());
 				}
 				message += "```";
-				event.getChannel().sendMessageAsync(message, null);
+				event.getAuthor().getPrivateChannel().sendMessageAsync(message, null);
 			}
 			
 			public String getHelp(GuildMessageReceivedEvent event) {
@@ -246,6 +249,7 @@ public class Commands {
 					event.getChannel().sendMessageAsync("[Error] Not enough systems specified", null);
 					return;
 				}
+				boolean failed = false;
 				Gson gson = new Gson();
 				EDSystem sys1 = null;
 				EDSystem sys2 = null;
@@ -261,18 +265,30 @@ public class Commands {
 					jsonSys1 = docSys1.body().text();
 					jsonSys2 = docSys2.body().text();
 					
-					if (jsonSys1.contains("[]") || jsonSys2.contains("[]")) {
-						event.getChannel().sendMessageAsync("[Error] System not found or coordinates not in db.", null);
-						return;
+					if (jsonSys1.contains("[]")) {
+						event.getChannel().sendMessageAsync(args[0].trim().toUpperCase() + " not found.", null);
+						failed = true;
 					}
+					if (jsonSys2.contains("[]")) {
+						event.getChannel().sendMessageAsync(args[1].trim().toUpperCase() + " not found.", null);
+						failed = true;
+					}
+					if (failed)
+						return;
 					
 					sys1 = gson.fromJson(jsonSys1, EDSystem.class);
 					sys2 = gson.fromJson(jsonSys2, EDSystem.class);
 					
-					if (sys1.coords == null || sys2.coords == null) {
-						event.getChannel().sendMessageAsync("[Error] System not found or coordinates not in db.", null);
-						return;
+					if (sys1.coords == null) {
+						event.getChannel().sendMessageAsync(args[0].trim().toUpperCase() + " found but coordinates not in db.", null);
+						failed = true;
 					}
+					if (sys2.coords == null) {
+						event.getChannel().sendMessageAsync(args[1].trim().toUpperCase() + " found but coordinates not in db.", null);
+						failed = true;
+					}
+					if (failed)
+						return;
 					
 					float x = sys2.coords.x - sys1.coords.x;
 					float y = sys2.coords.y - sys1.coords.y;
@@ -295,6 +311,19 @@ public class Commands {
 			}
 		});
 
+		guildCommands.put("time", new GuildCommand() {
+			public void runCommand(GuildMessageReceivedEvent event, String[] args) {
+				Date date = new Date();
+				SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss");
+				sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+				event.getChannel().sendMessageAsync("UTC time:\n" + sdf.format(date), null);
+			}
+			
+			public String getHelp(GuildMessageReceivedEvent event) {
+				return "UTC date & time now";
+			}
+		});
+		
 		guildCommands.put("new", new GuildCommand() {
 			public void runCommand(GuildMessageReceivedEvent event, String[] args) {
 				DiscordInfo info = new DiscordInfo();
@@ -482,7 +511,7 @@ public class Commands {
 				Karma karma = new Karma();
 				
 				if (args.length == 0)
-					event.getChannel().sendMessageAsync("You've got " + karma.getKarmaFor(event.getAuthor().getId()) + " karma.", null);
+					event.getChannel().sendMessageAsync("You've got " + karma.getKarmaFor(event.getAuthor().getId()) + " karma, " + event.getAuthor().getAsMention(), null);
 				else {
 					//Permission check
 					DiscordInfo info = new DiscordInfo();
@@ -522,6 +551,11 @@ public class Commands {
 						} else {
 							event.getChannel().sendMessageAsync("User not found", null);
 						}
+					}
+					else if (args[0].equalsIgnoreCase("update")) {
+						karma.updateUsernames(event.getJDA());
+
+						event.getChannel().sendMessageAsync("Updated all names and nicknames.", null);
 					}
 				}
 			}
@@ -699,6 +733,45 @@ public class Commands {
 				if (!(info.isOwner(event.getAuthor().getId()) || info.isAdmin(event.getGuild().getRolesForUser(event.getAuthor()))))
 					return "<name> - shows the available information about that group";
 				return "<name>|<add>|<del>, <name?> - show, add* or delete* information about a group";
+			}
+		});
+
+		guildCommands.put("squires", new GuildCommand() {
+			public void runCommand(GuildMessageReceivedEvent event, String[] args) {
+				DiscordInfo info = new DiscordInfo();
+				
+				//Permission check
+				if (!(info.isOwner(event.getAuthor().getId()) || info.isAdmin(event.getGuild().getRolesForUser(event.getAuthor())))) {
+					event.getChannel().sendMessageAsync("[Error] You aren't authorized to do this", null);
+					return;
+				}
+				try {
+					SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy");
+					sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+					String output = "Squires:\n```";
+					for (Map.Entry<String, String> entry : Users.squireList().entrySet()) {
+						if (event.getJDA().getUserById(entry.getKey()) == null)
+							continue;
+						
+						String username = event.getJDA().getUserById(entry.getKey()).getUsername();
+						if (event.getGuild().getNicknameForUser(event.getJDA().getUserById(entry.getKey())) != null)
+							username += " (" + event.getGuild().getNicknameForUser(event.getJDA().getUserById(entry.getKey())) + ")";
+						output += sdf.format(new Date(Long.parseLong(entry.getValue()))) + ": " + username + "\n";
+					}
+					output += "```";
+					
+					event.getJDA().getTextChannelById(info.getAdminChanID()).sendMessageAsync(output, null);
+				} catch (IOException e) {
+					event.getChannel().sendMessageAsync("[Error] Couldn't read required file", null);
+				}
+			}
+			
+			public String getHelp(GuildMessageReceivedEvent event) {
+				//Permission check
+				DiscordInfo info = new DiscordInfo();
+				if (!(info.isOwner(event.getAuthor().getId()) || info.isAdmin(event.getGuild().getRolesForUser(event.getAuthor()))))
+					return "";
+				return "gives a list of all the squires";
 			}
 		});
 		//end of commands
